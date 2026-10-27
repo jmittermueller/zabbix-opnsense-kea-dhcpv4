@@ -1,2 +1,390 @@
-# zabbix-opnsense-kea-dhcpv4
-Zabbix Template und Python Script for monitoring KEA DHCP v4 Leases on OPNsense
+# OPNsense Kea DHCPv4 Monitoring for Zabbix 7
+
+This project monitors the utilization of all configured Kea DHCPv4 pools on an OPNsense firewall with Zabbix 7.
+
+A local Python script reads the active Kea configuration and the current IPv4 leases directly on OPNsense. The Zabbix Agent executes the script through a UserParameter. The Zabbix template processes the JSON output with low-level discovery and automatically creates items and triggers for every DHCP pool.
+
+## Features
+
+- automatic discovery of all configured Kea DHCPv4 pools
+- support for multiple subnets and multiple pools per subnet
+- automatic detection of new, modified, and removed pools
+- pool size, used addresses, and free addresses
+- pool utilization in percent
+- Zabbix low-level discovery
+- only one script execution per update interval
+- no OPNsense API credentials required
+- no direct access to the Kea lease database
+- no modification of the Kea configuration
+
+## Architecture
+
+    OPNsense
+    ├── Kea DHCPv4
+    ├── Zabbix Agent
+    ├── UserParameter: opnsense.kea.dhcpv4.get
+    └── /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+              │
+              ├── Kea config-get
+              ├── Kea lease4-get-all
+              └── compact JSON
+                        │
+                        ▼
+    Zabbix master item
+    └── Dependent low-level discovery
+        ├── Pool size
+        ├── Used addresses
+        ├── Free addresses
+        ├── Usage
+        └── Subnet
+
+## Files
+
+| File | Description |
+|---|---|
+| `zabbix-opnsense-kea-dhcp.py` | Python script that retrieves the pools and leases locally |
+| `zabbix_template_opnsense_kea_dhcpv4_agent_7.yaml` | Zabbix 7 template in YAML format |
+| `README.md` | Installation and usage documentation |
+
+## Requirements
+
+- OPNsense with Kea DHCPv4 enabled
+- OPNsense Zabbix Agent plugin installed
+- Zabbix Server 7.0 or a compatible Zabbix 7 release
+- Python 3 on OPNsense
+- the OPNsense Kea Python library `lib.kea_ctrl`
+- an active Zabbix Agent configuration for the raw master item
+
+The script uses the following Python interpreter:
+
+    /usr/local/bin/python3
+
+## Example output
+
+For a pool containing six addresses with two active leases, the output is:
+
+    {"pools":[{"id":"1-192.168.137.200-192.168.137.205","subnet_id":"1","subnet":"192.168.137.0/24","pool_index":1,"pool":"192.168.137.200 - 192.168.137.205","start":"192.168.137.200","end":"192.168.137.205","size":6,"used":2,"free":4,"usage_percent":33.33}]}
+
+## Installation
+
+### 1. Copy the script to OPNsense
+
+From a Windows host, copy the file with `scp` from PowerShell:
+
+    scp "C:\Temp\zabbix-opnsense-kea-dhcp.py" root@192.168.137.5:/usr/local/sbin/
+
+For a non-default SSH port, for example port 2222:
+
+    scp -P 2222 "C:\Temp\zabbix-opnsense-kea-dhcp.py" root@192.168.137.5:/usr/local/sbin/
+
+The destination path is `/usr/local/sbin/zabbix-opnsense-kea-dhcp.py`.
+
+### 2. Set ownership and permissions
+
+Run the following commands on OPNsense:
+
+    chown root:wheel /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+    chmod 700 /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+
+Permissions `700` are appropriate for execution through `sudo`:
+
+- `root` can read, modify, and execute the file
+- the group and other users have no direct access
+- the Zabbix Agent invokes the script only through the configured UserParameter
+
+### 3. Test the script directly
+
+    /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+
+Alternatively, run it with an explicit Python interpreter:
+
+    /usr/local/bin/python3 /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+
+The output must be a JSON object containing a `pools` array.
+
+No active leases is a valid condition. A completely free pool can contain:
+
+    "size":6,"used":0,"free":6,"usage_percent":0.0
+
+### 4. Enable root permissions for UserParameters
+
+In the OPNsense web interface, open the general settings of the Zabbix Agent plugin:
+
+    Services → Zabbix Agent → General
+
+Enable:
+
+    Enable sudo root permissions
+
+The Zabbix Agent itself continues to run as the `zabbix` user. This option allows a UserParameter command prefixed with `sudo` to run as root.
+
+### 5. Create the UserParameter
+
+Add a new entry in the **User Parameters** section of the OPNsense Zabbix Agent plugin.
+
+**Key**
+
+    opnsense.kea.dhcpv4.get
+
+**Command**
+
+    sudo /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+
+The equivalent complete Zabbix syntax is:
+
+    UserParameter=opnsense.kea.dhcpv4.get,sudo /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+
+Enable the UserParameter, apply the configuration, and restart the Zabbix Agent.
+
+### 6. Test the UserParameter through the agent
+
+    /usr/local/sbin/zabbix_agentd -t opnsense.kea.dhcpv4.get
+
+If the path differs, locate the binary with:
+
+    which zabbix_agentd
+
+The test must return value type `t` and the pool JSON generated by the script.
+
+## Import the Zabbix template
+
+In Zabbix, open:
+
+    Data collection → Templates → Import
+
+Select:
+
+    zabbix_template_opnsense_kea_dhcpv4_agent_7.yaml
+
+During import, enable at least:
+
+- **Create new**
+- **Update existing** if an older version of the template already exists
+
+Link the imported template to the Zabbix host representing the OPNsense firewall.
+
+## Master item
+
+| Property | Value |
+|---|---|
+| Name | `Kea DHCPv4: Pool data raw` |
+| Type | Zabbix agent active |
+| Key | `opnsense.kea.dhcpv4.get` |
+| Update interval | 5 minutes |
+| Type of information | Text |
+
+Only the master item executes the Python script. The discovery rule and all pool items are dependent objects and do not cause additional script or Kea calls.
+
+## Low-level discovery
+
+The discovery rule processes:
+
+    $.pools
+
+The following LLD macros are used:
+
+| Macro | Content |
+|---|---|
+| `{#POOLID}` | unique pool ID built from the subnet ID, start address, and end address |
+| `{#SUBNETID}` | Kea subnet ID |
+| `{#SUBNET}` | IPv4 subnet in CIDR notation |
+| `{#POOLINDEX}` | sequential pool number within the subnet |
+| `{#POOL}` | pool range as text |
+| `{#POOLSTART}` | first address in the pool |
+| `{#POOLEND}` | last address in the pool |
+
+## Discovered items
+
+The following items are created for every discovered pool:
+
+| Item | Zabbix key | Type |
+|---|---|---|
+| Pool size | `opnsense.kea.dhcpv4.pool.size[{#POOLID}]` | Numeric unsigned |
+| Used addresses | `opnsense.kea.dhcpv4.pool.used[{#POOLID}]` | Numeric unsigned |
+| Free addresses | `opnsense.kea.dhcpv4.pool.free[{#POOLID}]` | Numeric unsigned |
+| Usage | `opnsense.kea.dhcpv4.pool.usage[{#POOLID}]` | Numeric float, `%` |
+| Subnet | `opnsense.kea.dhcpv4.pool.subnet[{#POOLID}]` | Character |
+
+Example values:
+
+    Pool size:       6
+    Used addresses:  2
+    Free addresses:  4
+    Usage:           33.33 %
+
+## Triggers and macros
+
+| Macro | Default | Purpose |
+|---|---:|---|
+| `{$KEA.DHCP.FREE.CRIT}` | `2` | critical minimum number of free addresses |
+| `{$KEA.DHCP.USAGE.WARN}` | `90` | warning threshold for pool utilization in percent |
+
+### Too few free addresses
+
+The trigger fires when:
+
+    free < {$KEA.DHCP.FREE.CRIT}
+
+With the default value `2`, the trigger fires when only `1` or `0` addresses remain free. It does not fire when exactly `2` addresses are free.
+
+### High pool utilization
+
+The warning trigger fires when utilization remains above the configured threshold for ten minutes:
+
+    usage > {$KEA.DHCP.USAGE.WARN}
+
+The default threshold is:
+
+    90 %
+
+Both trigger prototypes allow manual closing.
+
+## How the Python script works
+
+The script uses the Kea control class included with OPNsense:
+
+    from lib.kea_ctrl import KeaCtrl
+
+Because the custom script is stored outside the OPNsense Kea script directory, that directory is added to the Python module search path for the current process only:
+
+    sys.path.insert(0, "/usr/local/opnsense/scripts/kea")
+
+This statement does not modify the OPNsense configuration, write any file, or remain active after the script exits.
+
+The script executes two local Kea commands:
+
+    config-get
+    lease4-get-all
+
+`config-get` returns the active DHCPv4 configuration, including subnets and pools. `lease4-get-all` returns the existing IPv4 leases for the configured subnets.
+
+The following values are calculated for each pool:
+
+    size = end - start + 1
+    used = number of unique lease addresses within the pool
+    free = size - used
+    usage_percent = used / size × 100
+
+An empty lease result is handled as a valid condition and produces `used = 0`.
+
+## Troubleshooting
+
+### Master item is unsupported
+
+Test the UserParameter:
+
+    /usr/local/sbin/zabbix_agentd -t opnsense.kea.dhcpv4.get
+
+Check the script and its permissions:
+
+    ls -l /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+
+Expected permissions:
+
+    -rwx------  1 root  wheel  ... zabbix-opnsense-kea-dhcp.py
+
+Also verify that:
+
+- `Enable sudo root permissions` is enabled
+- the UserParameter command starts with `sudo`
+- the UserParameter is enabled
+- the Zabbix Agent was restarted after the change
+
+### Bad interpreter or ^M
+
+If the file was saved with Windows line endings, the following error may occur:
+
+    /usr/local/bin/python3^M: bad interpreter
+
+Convert the file on OPNsense:
+
+    sed -i '' 's/\r$//' /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+
+### No pools in the output
+
+If the output is:
+
+    {"pools":[]}
+
+Verify that:
+
+- Kea DHCPv4 is enabled
+- at least one Kea DHCPv4 subnet is configured
+- the subnet contains at least one pool
+- the Kea configuration has been applied in OPNsense
+
+### No active leases
+
+No active leases is not an error. A completely free pool can appear as:
+
+    {"size":6,"used":0,"free":6,"usage_percent":0.0}
+
+### Direct execution works, but the UserParameter fails
+
+Common causes are:
+
+- `sudo` is missing from the UserParameter command
+- `Enable sudo root permissions` is disabled
+- the agent configuration has not been reloaded
+- the script path is incorrect
+- the UserParameter is disabled
+
+## Updating
+
+Copy the new script version to OPNsense:
+
+    scp "C:\Temp\zabbix-opnsense-kea-dhcp.py" root@192.168.137.5:/usr/local/sbin/
+
+Set ownership and permissions again:
+
+    chown root:wheel /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+    chmod 700 /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+
+Test the updated script:
+
+    /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+
+To update the template, import the new YAML file and select **Update existing**.
+
+## Backup and recovery
+
+The UserParameter configured through the OPNsense Zabbix Agent plugin is part of the OPNsense configuration.
+
+The file `/usr/local/sbin/zabbix-opnsense-kea-dhcp.py` is not included in a normal OPNsense configuration backup. Keep the file in this Git repository or in a separate administrative backup.
+
+After reinstalling OPNsense:
+
+1. Restore the OPNsense configuration.
+2. Install or verify the Zabbix Agent plugin.
+3. Copy the Python script to `/usr/local/sbin/`.
+4. Set ownership and permissions.
+5. Verify the UserParameter and sudo setting.
+6. Restart the Zabbix Agent.
+7. Test the script and the UserParameter.
+
+Normal OPNsense updates should usually leave a custom, unmanaged file in `/usr/local/sbin/` unchanged. The file must still be restored separately after a reinstallation.
+
+## Security
+
+- no OPNsense API keys are required
+- no additional network service is exposed
+- the script does not modify the Kea configuration
+- the script does not write to the lease database
+- the script is owned by `root:wheel` and protected with mode `700`
+- privileged execution is limited to the configured UserParameter
+
+The Python file must not be writable by the `zabbix` user. Otherwise, the privileged UserParameter could be abused for privilege escalation.
+
+## Uninstallation
+
+1. Unlink the template from the host and optionally delete the template from Zabbix.
+2. Remove the UserParameter from OPNsense.
+3. Delete the script:
+
+       rm /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
+
+4. Restart the Zabbix Agent.
+
+## License
+
+Add a license file appropriate for the repository. Without an explicit license, all rights remain with the respective copyright holder.
