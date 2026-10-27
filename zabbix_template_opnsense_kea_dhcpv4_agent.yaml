@@ -1,0 +1,195 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+  - uuid: 9c912fc8757f4bd1812577b5cb64117c
+    name: Templates/Network devices
+  templates:
+  - uuid: d4228ce0d69f498c96aad02da69c6d27
+    template: OPNsense Kea DHCPv4 by Zabbix agent
+    name: OPNsense Kea DHCPv4 by Zabbix agent
+    description: Monitors all configured Kea DHCPv4 pools on OPNsense. The Zabbix agent executes the local UserParameter opnsense.kea.dhcpv4.get,
+      which calls /usr/local/sbin/zabbix-opnsense-kea-dhcp.py. The returned JSON is processed by a dependent low-level discovery
+      rule and dependent item prototypes.
+    vendor:
+      name: Soft-Management
+      version: 7.0-30
+    groups:
+    - name: Templates/Network devices
+    items:
+    - uuid: afc64121619f4450abd9a23f4bd79602
+      name: 'Kea DHCPv4: Pool data raw'
+      type: ZABBIX_ACTIVE
+      key: opnsense.kea.dhcpv4.get
+      delay: 5m
+      history: 1d
+      value_type: TEXT
+      description: JSON returned by the local OPNsense Python script through the Zabbix agent UserParameter.
+      tags:
+      - tag: component
+        value: raw
+    discovery_rules:
+    - uuid: c43b501358494b169ef8af3b6b1a28bb
+      name: 'Kea DHCPv4: Pool discovery'
+      type: DEPENDENT
+      key: opnsense.kea.dhcpv4.pool.discovery
+      delay: '0'
+      lifetime: 7d
+      description: Discovers every Kea DHCPv4 pool returned by the local OPNsense script.
+      item_prototypes:
+      - uuid: 26f8e2c614684fff87286c02a9be2036
+        name: 'Kea DHCPv4 pool {#POOL}: Pool size'
+        type: DEPENDENT
+        key: opnsense.kea.dhcpv4.pool.size[{#POOLID}]
+        delay: '0'
+        history: 7d
+        trends: 365d
+        value_type: UNSIGNED
+        description: Total number of IPv4 addresses in the DHCP pool.
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.pools[?(@.id=="{#POOLID}")].size.first()
+        master_item:
+          key: opnsense.kea.dhcpv4.get
+        tags:
+        - tag: component
+          value: dhcp-pool
+        - tag: subnet
+          value: '{#SUBNET}'
+      - uuid: b2c56613e7b04884a2aadd026e1868fb
+        name: 'Kea DHCPv4 pool {#POOL}: Used addresses'
+        type: DEPENDENT
+        key: opnsense.kea.dhcpv4.pool.used[{#POOLID}]
+        delay: '0'
+        history: 7d
+        trends: 365d
+        value_type: UNSIGNED
+        description: Number of lease addresses currently returned inside the DHCP pool.
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.pools[?(@.id=="{#POOLID}")].used.first()
+        master_item:
+          key: opnsense.kea.dhcpv4.get
+        tags:
+        - tag: component
+          value: dhcp-pool
+        - tag: subnet
+          value: '{#SUBNET}'
+      - uuid: 04b6c5dab0834c02bd2202e05e620ca6
+        name: 'Kea DHCPv4 pool {#POOL}: Free addresses'
+        type: DEPENDENT
+        key: opnsense.kea.dhcpv4.pool.free[{#POOLID}]
+        delay: '0'
+        history: 7d
+        trends: 365d
+        value_type: UNSIGNED
+        description: Number of unallocated IPv4 addresses in the DHCP pool.
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.pools[?(@.id=="{#POOLID}")].free.first()
+        master_item:
+          key: opnsense.kea.dhcpv4.get
+        tags:
+        - tag: component
+          value: dhcp-pool
+        - tag: subnet
+          value: '{#SUBNET}'
+        trigger_prototypes:
+        - uuid: aa7bf30f16b24cd0b07c26b9dc768544
+          expression: last(/OPNsense Kea DHCPv4 by Zabbix agent/opnsense.kea.dhcpv4.pool.free[{#POOLID}])<{$KEA.DHCP.FREE.CRIT}
+          name: 'Kea DHCPv4 pool {#POOL}: Too few free addresses'
+          priority: HIGH
+          description: The number of free addresses is below {$KEA.DHCP.FREE.CRIT}.
+          manual_close: 'YES'
+          tags:
+          - tag: scope
+            value: availability
+      - uuid: b68560e18a8c4fe1bd2813f2e7f23504
+        name: 'Kea DHCPv4 pool {#POOL}: Usage'
+        type: DEPENDENT
+        key: opnsense.kea.dhcpv4.pool.usage[{#POOLID}]
+        delay: '0'
+        history: 7d
+        trends: 365d
+        value_type: FLOAT
+        units: '%'
+        description: Percentage of addresses currently used in the DHCP pool.
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.pools[?(@.id=="{#POOLID}")].usage_percent.first()
+        master_item:
+          key: opnsense.kea.dhcpv4.get
+        tags:
+        - tag: component
+          value: dhcp-pool
+        - tag: subnet
+          value: '{#SUBNET}'
+        trigger_prototypes:
+        - uuid: c19c350e29e84621a4807ceabaa906fc
+          expression: min(/OPNsense Kea DHCPv4 by Zabbix agent/opnsense.kea.dhcpv4.pool.usage[{#POOLID}],10m)>{$KEA.DHCP.USAGE.WARN}
+          name: 'Kea DHCPv4 pool {#POOL}: High utilization'
+          priority: WARNING
+          description: Pool utilization has exceeded {$KEA.DHCP.USAGE.WARN}% for 10 minutes.
+          manual_close: 'YES'
+          dependencies:
+          - name: 'Kea DHCPv4 pool {#POOL}: Too few free addresses'
+            expression: last(/OPNsense Kea DHCPv4 by Zabbix agent/opnsense.kea.dhcpv4.pool.free[{#POOLID}])<{$KEA.DHCP.FREE.CRIT}
+          tags:
+          - tag: scope
+            value: capacity
+      - uuid: 0d03d35739ef441394c8456e38d28c6a
+        name: 'Kea DHCPv4 pool {#POOL}: Subnet'
+        type: DEPENDENT
+        key: opnsense.kea.dhcpv4.pool.subnet[{#POOLID}]
+        delay: '0'
+        history: 7d
+        value_type: CHAR
+        description: Configured subnet containing the DHCP pool.
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $.pools[?(@.id=="{#POOLID}")].subnet.first()
+        master_item:
+          key: opnsense.kea.dhcpv4.get
+        tags:
+        - tag: component
+          value: dhcp-pool
+      master_item:
+        key: opnsense.kea.dhcpv4.get
+      lld_macro_paths:
+      - lld_macro: '{#POOLID}'
+        path: $.id
+      - lld_macro: '{#SUBNETID}'
+        path: $.subnet_id
+      - lld_macro: '{#SUBNET}'
+        path: $.subnet
+      - lld_macro: '{#POOL}'
+        path: $.pool
+      - lld_macro: '{#POOLSTART}'
+        path: $.start
+      - lld_macro: '{#POOLEND}'
+        path: $.end
+      - lld_macro: '{#POOLINDEX}'
+        path: $.pool_index
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.pools
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+    macros:
+    - macro: '{$KEA.DHCP.FREE.CRIT}'
+      value: '2'
+      description: 'Critical threshold: trigger when free addresses are below this value.'
+    - macro: '{$KEA.DHCP.USAGE.WARN}'
+      value: '90'
+      description: Warning threshold for pool utilization in percent, evaluated over 10 minutes.
+    tags:
+    - tag: class
+      value: network
+    - tag: target
+      value: opnsense-kea
