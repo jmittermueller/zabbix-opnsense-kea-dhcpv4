@@ -384,7 +384,3 @@ The Python file must not be writable by the `zabbix` user. Otherwise, the privil
        rm /usr/local/sbin/zabbix-opnsense-kea-dhcp.py
 
 4. Restart the Zabbix Agent.
-
-## License
-
-Add a license file appropriate for the repository. Without an explicit license, all rights remain with the respective copyright holder.
